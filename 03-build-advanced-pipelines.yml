@@ -1,47 +1,67 @@
 # Build Pipeline for SQL Database
 
-# De *trigger* geeft aan waardoor deze pipeline automatisch uitgevoerd wordt. In dit geval: een *commit* tegen *master*
+# The *trigger* specifies what triggers this pipeline to run automatically. In this case: a *commit* to *master*
 trigger:
-  branches: 
-    include:
-      - master
-  paths:
-    include:
-      # We zijn hier redelijk specifiek in welke path-wijzigingen we in de trigger willen opnemen.
-      # Dit voorkomt dat je zelfgemaakte pipelines in dit project bij elke wijziging deze buid-pipeline.yml triggeren.
-      - src/sqldatabase
-      - pipeline-yaml/build-pipeline.yml
+- master
 
+stages:
+- stage: BuildStage
 
-# De *pool* geeft aan van wat voor VM-image gebruik gemaakt moet worden om deze pipeline uit te kunnen voeren. 
-pool:
-  name: Azure Pipelines
-  vmImage: windows-2019
+  jobs:
+  - job: BuildJob
 
-variables:
-  BuildConfiguration: 'Release'
+    # The *pool* specifies the VM image to be used for running this pipeline. 
+    pool:
+      name: Azure Pipelines
+      vmImage: windows-2019
 
-# Hier volgende daadwerkelijke "build-stappen". In dit geval hebben we een "eenvoudige" build pipeline - later zullen we kijken naar pipelines met meerdere "stages".
-steps:
-### De configuratie van een "task" hoef je niet te onthouden: er zitten visuele hulpmiddelen in Azure DevOps Pipelines ingebakken om *tasks* toe te voegen en de instellingen hiervoor te doen.
-- task: VSBuild@1
-  displayName: 'Build Data Warehouse'
-  inputs:
-    solution: 'samples/databases/wide-world-importers/wwi-dw-ssdt/WideWorldImportersDW.sln'
-    configuration: '$(BuildConfiguration)'
+    variables:
+      BuildConfiguration: 'Release'
 
-- task: CopyFiles@2
-  displayName: 'Copy Files to: $(Build.ArtifactStagingDirectory)'
-  inputs:
-    SourceFolder: '$(Build.SourcesDirectory)'
-    Contents: '**/bin/$(BuildConfiguration)/**/*.dacpac'
-    TargetFolder: '$(Build.ArtifactStagingDirectory)'
-    flattenFolders: true
+    # Here come the actual "build steps". In this case, we have a "simple" build pipeline - later, we will look at pipelines with multiple "stages".
+    steps:
+    ### You don't have to memorize the configuration of a "task": Azure DevOps Pipelines has built-in visual tools to add *tasks* and configure their settings.
+    - task: VSBuild@1
+      displayName: 'Build Data Warehouse'
+      inputs:
+        solution: 'src/sqldatabase/**/*.sln'
+        configuration: '$(BuildConfiguration)'
 
-# De Artifact is het resultaat van deze pipeline. Omdat we deze publiceren, kan een deployment-pipeline deze weer oppikken om "uit te rollen" naar andere omgevingen.
-- task: PublishPipelineArtifact@1
-  inputs:
-    targetPath: '$(Build.ArtifactStagingDirectory)'
-    artifact: 'SQLDW'
-    publishLocation: 'pipeline'
+    - task: CopyFiles@2
+      displayName: 'Copy Files to: $(Build.ArtifactStagingDirectory)'
+      inputs:
+        SourceFolder: '$(Build.SourcesDirectory)'
+        Contents: '**/bin/$(BuildConfiguration)/**/*.dacpac'
+        TargetFolder: '$(Build.ArtifactStagingDirectory)'
+        flattenFolders: true
 
+    # The artifact is the result of this pipeline. By publishing it, a deployment pipeline can pick it up to "roll out" to other environments.
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)'
+        artifact: 'SQLDW'
+        publishLocation: 'pipeline'
+
+- stage: DeployToDevStage
+  jobs:
+  - job: DeployToDevJob
+
+    steps:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        buildType: 'current'
+        artifactName: 'SQLDW'
+        targetPath: '$(Pipeline.Workspace)'
+
+    - task: SqlAzureDacpacDeployment@1
+      inputs:
+        azureSubscription: 'Azure ARM connection (Wortell Smart Learning)'
+        AuthenticationType: 'server'
+        ServerName: 'ci4bisqldbserver-dev-student05.database.windows.net'
+        DatabaseName: 'ci4bisqldbdw'
+        SqlUsername: 'student'
+        SqlPassword: 'WortellSmartLearning.nl'
+        deployType: 'DacpacTask'
+        DeploymentAction: 'Publish'
+        DacpacFile: '$(Pipeline.Workspace)/AdventureWorksDW.dacpac'
+        IpDetectionMethod: 'AutoDetect'
