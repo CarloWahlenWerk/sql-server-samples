@@ -1,0 +1,67 @@
+# Build Pipeline for SQL Database
+
+# The *trigger* specifies what triggers this pipeline to run automatically. In this case: a *commit* to *master*
+trigger:
+- master
+
+stages:
+- stage: BuildStage
+
+  jobs:
+  - job: BuildJob
+
+    # The *pool* specifies the VM image to be used for running this pipeline. 
+    pool:
+      name: Azure Pipelines
+      vmImage: windows-2019
+
+    variables:
+      BuildConfiguration: 'Release'
+
+    # Here come the actual "build steps". In this case, we have a "simple" build pipeline - later, we will look at pipelines with multiple "stages".
+    steps:
+    ### You don't have to memorize the configuration of a "task": Azure DevOps Pipelines has built-in visual tools to add *tasks* and configure their settings.
+    - task: VSBuild@1
+      displayName: 'Build Data Warehouse'
+      inputs:
+        solution: 'src/sqldatabase/**/*.sln'
+        configuration: '$(BuildConfiguration)'
+
+    - task: CopyFiles@2
+      displayName: 'Copy Files to: $(Build.ArtifactStagingDirectory)'
+      inputs:
+        SourceFolder: '$(Build.SourcesDirectory)'
+        Contents: '**/bin/$(BuildConfiguration)/**/*.dacpac'
+        TargetFolder: '$(Build.ArtifactStagingDirectory)'
+        flattenFolders: true
+
+    # The artifact is the result of this pipeline. By publishing it, a deployment pipeline can pick it up to "roll out" to other environments.
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)'
+        artifact: 'SQLDW'
+        publishLocation: 'pipeline'
+
+- stage: DeployToDevStage
+  jobs:
+  - job: DeployToDevJob
+
+    steps:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        buildType: 'current'
+        artifactName: 'SQLDW'
+        targetPath: '$(Pipeline.Workspace)'
+
+    - task: SqlAzureDacpacDeployment@1
+      inputs:
+        azureSubscription: 'Azure ARM connection (Wortell Smart Learning)'
+        AuthenticationType: 'server'
+        ServerName: 'ci4bisqldbserver-dev-student05.database.windows.net'
+        DatabaseName: 'ci4bisqldbdw'
+        SqlUsername: 'student'
+        SqlPassword: 'WortellSmartLearning.nl'
+        deployType: 'DacpacTask'
+        DeploymentAction: 'Publish'
+        DacpacFile: '$(Pipeline.Workspace)/AdventureWorksDW.dacpac'
+        IpDetectionMethod: 'AutoDetect'
